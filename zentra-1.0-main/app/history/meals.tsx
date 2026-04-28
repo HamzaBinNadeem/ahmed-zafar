@@ -1,21 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronLeft, Trash2 } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Trash2 } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
-import DayProgressBar from '@/components/DayProgressBar';
 import { supabase } from '@/lib/supabase';
+import { setGeneratedMealPlan } from '@/lib/mealPlanStore';
 
 export default function MealsHistoryScreen() {
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    loadMealHistory();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadMealHistory();
+    }, [])
+  );
 
   const loadMealHistory = async () => {
     try {
@@ -64,26 +66,54 @@ export default function MealsHistoryScreen() {
     );
   };
 
-  const getDayData = () => {
-    const days = [];
-    for (let i = 0; i < 7; i++) {
-      const date = new Date();
-      date.setDate(date.getDate() - (6 - i));
+  const parseMealData = (meal: any) => {
+    try {
+      return typeof meal.meal_plan_data === 'string'
+        ? JSON.parse(meal.meal_plan_data)
+        : meal.meal_plan_data;
+    } catch {
+      return {};
+    }
+  };
 
-      const weekStart = new Date(date);
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      const weekStartStr = weekStart.toISOString().split('T')[0];
+  const getMealSummary = (mealData: any) => {
+    const plan = mealData?.plan || {};
+    const dayCount = Object.keys(plan).length;
+    const firstDay = plan.day1 || Object.values(plan)[0] || {};
+    const firstMeals = Object.values(firstDay as any)
+      .map((item: any) => item?.food)
+      .filter(Boolean);
 
-      const hasData = historyData.some((meal) => meal.week_start_date === weekStartStr);
+    return {
+      dayCount,
+      firstMeals,
+      planType: mealData?.plan_type || (dayCount > 1 ? 'weekly' : 'daily'),
+    };
+  };
 
-      days.push({
-        date: date.toISOString().split('T')[0],
-        completionPercent: hasData ? 100 : 0,
-        label: ['S', 'M', 'T', 'W', 'T', 'F', 'S'][date.getDay()],
-      });
+  const handleOpenMealPlan = (meal: any) => {
+    const mealData = parseMealData(meal);
+    const plan = mealData?.plan;
+
+    if (!plan) {
+      Alert.alert('Meal plan unavailable', 'This saved meal plan does not contain plan details.');
+      return;
     }
 
-    return days;
+    setGeneratedMealPlan({
+      dailyPlan: plan.day1,
+      weeklyPlan: plan,
+      culinaryPreference: mealData.culinary_preference,
+      dietaryPreference: mealData.dietary_preference,
+      goal: mealData.goal,
+      weekStartDate: meal.week_start_date,
+    });
+
+    if ((mealData.plan_type || '').toLowerCase() === 'daily') {
+      router.push('/meal-plan/recipe?source=daily&day=day1');
+    } else {
+      router.push('/meal-plan/weekly');
+    }
   };
 
   return (
@@ -101,8 +131,6 @@ export default function MealsHistoryScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          <DayProgressBar days={getDayData()} />
-
           <View style={styles.mealsContainer}>
             <Text style={styles.sectionTitle}>Saved Meal Plans</Text>
 
@@ -115,9 +143,8 @@ export default function MealsHistoryScreen() {
               </View>
             ) : (
               historyData.map((meal) => {
-                const mealData = typeof meal.meal_plan_data === 'string'
-                  ? JSON.parse(meal.meal_plan_data)
-                  : meal.meal_plan_data;
+                const mealData = parseMealData(meal);
+                const summary = getMealSummary(mealData);
                 const weekStart = new Date(meal.week_start_date);
 
                 return (
@@ -125,7 +152,9 @@ export default function MealsHistoryScreen() {
                     <View style={styles.mealHeader}>
                       <View style={styles.mealInfo}>
                         <Text style={styles.weekLabel}>
-                          Week of {weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          {summary.planType === 'daily'
+                            ? 'Saved Daily Plan'
+                            : `Week of ${weekStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`}
                         </Text>
                         {mealData?.culinary_preference && (
                           <Text style={styles.preference}>{mealData.culinary_preference}</Text>
@@ -142,6 +171,17 @@ export default function MealsHistoryScreen() {
                         year: 'numeric',
                       })}
                     </Text>
+                    {summary.firstMeals.length > 0 && (
+                      <Text style={styles.mealPreview} numberOfLines={2}>
+                        {summary.firstMeals.join(' • ')}
+                      </Text>
+                    )}
+                    <TouchableOpacity style={styles.viewButton} onPress={() => handleOpenMealPlan(meal)}>
+                      <Text style={styles.viewButtonText}>
+                        {summary.planType === 'daily' ? 'View Daily Recipes' : `View ${summary.dayCount}-Day Plan`}
+                      </Text>
+                      <ChevronRight size={16} color={theme.colors.primary} />
+                    </TouchableOpacity>
                   </View>
                 );
               })
@@ -213,6 +253,24 @@ const styles = StyleSheet.create({
   dateText: {
     fontSize: theme.fontSize.sm,
     color: theme.colors.secondary,
+  },
+  mealPreview: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.white,
+    marginTop: 10,
+    lineHeight: 20,
+  },
+  viewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 12,
+  },
+  viewButtonText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.primary,
+    fontWeight: '600',
   },
   emptyState: {
     alignItems: 'center',

@@ -11,7 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
-import { ChevronLeft, ChevronDown } from "lucide-react-native";
+import { ChevronLeft, ChevronDown, Save } from "lucide-react-native";
 import { theme } from "@/constants/theme";
 import PrimaryButton from "@/components/PrimaryButton";
 import { generateDailyMealPlan, generateWeeklyMealPlan } from "@/lib/mealGeneratorApi";
@@ -69,6 +69,7 @@ export default function MealGeneratorScreen() {
   const [goal, setGoal] = useState("");
   const [dailyLoading, setDailyLoading] = useState(false);
   const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [savingPlan, setSavingPlan] = useState(false);
   const [dailyPlan, setDailyPlan] = useState<DayMealPlan | null>(null);
   const [weeklyPlan, setWeeklyPlan] = useState<WeeklyMealPlan | null>(null);
 
@@ -116,6 +117,14 @@ export default function MealGeneratorScreen() {
     );
   };
 
+  const isCompleteWeeklyPlan = (plan?: WeeklyMealPlan | null) => {
+    if (!plan) return false;
+
+    return Array.from({ length: 7 }, (_, index) => `day${index + 1}`).every(
+      (dayKey) => isCompleteDayPlan(plan[dayKey])
+    );
+  };
+
   const handleGenerateDaily = async () => {
     setDailyLoading(true);
     try {
@@ -154,6 +163,11 @@ export default function MealGeneratorScreen() {
         dietaryPreference,
         additionalRequirements: goal,
       });
+
+      if (!isCompleteWeeklyPlan(plan)) {
+        throw new Error("Weekly meal plan was generated in an unexpected format.");
+      }
+
       const weekStartDate = getWeekStartDate();
 
       setWeeklyPlan(plan);
@@ -167,31 +181,55 @@ export default function MealGeneratorScreen() {
         weekStartDate,
       });
 
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const { error: saveError } = await supabase
-          .from("user_meal_history")
-          .upsert({
-            user_id: user.id,
-            week_start_date: weekStartDate,
-            meal_plan_data: {
-              culinary_preference: culinaryPreference,
-              dietary_preference: dietaryPreference,
-              goal,
-              plan,
-            },
-          }, { onConflict: "user_id,week_start_date" });
-
-        if (saveError) {
-          throw saveError;
-        }
-      }
-
       router.push("/meal-plan/weekly");
     } catch (error: any) {
       Alert.alert("Meal generator error", error.message || "Failed to generate weekly meal plan.");
     } finally {
       setWeeklyLoading(false);
+    }
+  };
+
+  const handleSaveMealPlan = async () => {
+    const planToSave = weeklyPlan ?? (dailyPlan ? { day1: dailyPlan } : null);
+
+    if (!planToSave) {
+      Alert.alert("No meal plan yet", "Generate a daily or weekly meal plan before saving.");
+      return;
+    }
+
+    setSavingPlan(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Please sign in before saving a meal plan.");
+
+      const planType = weeklyPlan ? "weekly" : "daily";
+      const savedDate = planType === "weekly" ? getWeekStartDate() : new Date().toISOString().split("T")[0];
+
+      const { error } = await supabase
+        .from("user_meal_history")
+        .upsert(
+          {
+            user_id: user.id,
+            week_start_date: savedDate,
+            meal_plan_data: {
+              plan_type: planType,
+              culinary_preference: culinaryPreference,
+              dietary_preference: dietaryPreference,
+              goal,
+              plan: planToSave,
+              saved_at: new Date().toISOString(),
+            },
+          },
+          { onConflict: "user_id,week_start_date" }
+        );
+
+      if (error) throw error;
+
+      Alert.alert("Meal plan saved", "You can find it in Meal History.");
+    } catch (error: any) {
+      Alert.alert("Save failed", error.message || "Could not save this meal plan.");
+    } finally {
+      setSavingPlan(false);
     }
   };
 
@@ -327,6 +365,17 @@ export default function MealGeneratorScreen() {
 
           <TouchableOpacity style={styles.secondaryButton} onPress={handleGetRecipe}>
             <Text style={styles.secondaryButtonText}>View Daily Recipes</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.saveButton, !previewPlan && styles.saveButtonDisabled]}
+            onPress={handleSaveMealPlan}
+            disabled={!previewPlan || savingPlan}
+          >
+            <Save size={18} color={theme.colors.white} />
+            <Text style={styles.saveButtonText}>
+              {savingPlan ? "Saving Meal Plan..." : "Save Current Meal Plan"}
+            </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -480,6 +529,27 @@ const styles = StyleSheet.create({
   },
 
   generateButton: { marginBottom: 12 },
+  saveButton: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: 16,
+    marginTop: 4,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  saveButtonDisabled: {
+    opacity: 0.5,
+  },
+  saveButtonText: {
+    fontSize: theme.fontSize.md,
+    color: theme.colors.white,
+    fontWeight: "600",
+  },
   secondaryButton: { padding: 16, alignItems: "center" },
   secondaryButtonText: {
     fontSize: theme.fontSize.md,

@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import {
@@ -16,11 +16,14 @@ import { supabase } from '@/lib/supabase';
 
 export default function DashboardScreen() {
   const [userName, setUserName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const router = useRouter();
 
-  useEffect(() => {
-    loadUserProfile();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadUserProfile();
+    }, [])
+  );
 
   const loadUserProfile = async () => {
     try {
@@ -28,12 +31,13 @@ export default function DashboardScreen() {
       if (user) {
         const { data: profile } = await supabase
           .from('user_profiles')
-          .select('first_name')
+          .select('first_name, avatar_url')
           .eq('id', user.id)
           .maybeSingle();
 
         if (profile) {
           setUserName(profile.first_name);
+          setAvatarUrl(profile.avatar_url ?? null);
         }
       }
     } catch (error) {
@@ -92,9 +96,13 @@ export default function DashboardScreen() {
     activeOpacity={0.8}
     onPress={() => router.push('/profile')}
   >
-    <Text style={styles.avatarText}>
-      {userName ? userName.charAt(0).toUpperCase() : 'U'}
-    </Text>
+    {avatarUrl ? (
+      <Image source={{ uri: avatarUrl }} style={styles.avatarImage} />
+    ) : (
+      <Text style={styles.avatarText}>
+        {userName ? userName.charAt(0).toUpperCase() : 'U'}
+      </Text>
+    )}
   </TouchableOpacity>
 </View>
 
@@ -187,6 +195,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
   },
   avatarText: {
     fontSize: theme.fontSize.xl,

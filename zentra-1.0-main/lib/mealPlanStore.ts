@@ -29,6 +29,10 @@ type GeneratedMealPlanState = {
 const state: GeneratedMealPlanState = {};
 
 export function setGeneratedMealPlan(nextState: GeneratedMealPlanState) {
+  if (nextState.weeklyPlan || nextState.dailyPlan) {
+    state.shoppingList = undefined;
+  }
+
   Object.assign(state, nextState);
 }
 

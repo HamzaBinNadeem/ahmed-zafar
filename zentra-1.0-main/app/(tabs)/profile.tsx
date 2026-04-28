@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Modal, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Modal, ScrollView, Image, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { LogOut, User as UserIcon, ChevronRight, X } from 'lucide-react-native';
+import { Camera, LogOut, User as UserIcon, ChevronRight, X } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import ScrollPicker from '@/components/ScrollPicker';
@@ -16,6 +17,7 @@ export default function ProfileScreen() {
   const [editType, setEditType] = useState<'height' | 'weight' | 'steps' | null>(null);
   const [tempValue, setTempValue] = useState<number>(0);
   const [tempUnit, setTempUnit] = useState<string>('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -55,6 +57,66 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const handlePickAvatar = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please allow photo library access to upload a profile picture.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      setUploadingAvatar(true);
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Please sign in before uploading a profile picture.');
+
+      const asset = result.assets[0];
+      const extension = (asset.uri.split('.').pop() || 'jpg').toLowerCase();
+      const normalizedExtension = extension === 'jpg' ? 'jpeg' : extension;
+      const contentType = asset.mimeType || `image/${normalizedExtension}`;
+      const filePath = `${user.id}/avatar-${Date.now()}.${extension}`;
+      const imageResponse = await fetch(asset.uri);
+      const imageData = await imageResponse.arrayBuffer();
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, imageData, {
+          contentType,
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      const avatarUrl = publicUrlData.publicUrl;
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      setProfile((prev: any) => ({ ...prev, avatar_url: avatarUrl }));
+    } catch (error: any) {
+      Alert.alert('Upload failed', error.message || 'Could not upload profile picture.');
+    } finally {
+      setUploadingAvatar(false);
+    }
   };
 
   const openEditModal = (type: 'height' | 'weight' | 'steps') => {
@@ -252,9 +314,30 @@ export default function ProfileScreen() {
       <SafeAreaView style={styles.safeArea}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.avatarContainer}>
-            <View style={styles.avatar}>
-              <UserIcon size={48} color={theme.colors.white} />
-            </View>
+            <TouchableOpacity
+              style={styles.avatarButton}
+              onPress={handlePickAvatar}
+              disabled={uploadingAvatar}
+              activeOpacity={0.85}
+            >
+              <View style={styles.avatar}>
+                {profile?.avatar_url ? (
+                  <Image source={{ uri: profile.avatar_url }} style={styles.avatarImage} />
+                ) : (
+                  <UserIcon size={48} color={theme.colors.white} />
+                )}
+                <View style={styles.cameraBadge}>
+                  {uploadingAvatar ? (
+                    <ActivityIndicator size="small" color={theme.colors.white} />
+                  ) : (
+                    <Camera size={16} color={theme.colors.white} />
+                  )}
+                </View>
+              </View>
+              <Text style={styles.avatarHint}>
+                {uploadingAvatar ? 'Uploading...' : 'Tap to update photo'}
+              </Text>
+            </TouchableOpacity>
             {profile && (
               <>
                 <Text style={styles.name}>
@@ -405,6 +488,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 32,
   },
+  avatarButton: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   avatar: {
     width: 100,
     height: 100,
@@ -412,7 +499,29 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  cameraBadge: {
+    position: 'absolute',
+    right: 2,
+    bottom: 2,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: theme.colors.card,
+    borderWidth: 2,
+    borderColor: theme.colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarHint: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.secondary,
+    marginTop: 8,
   },
   name: {
     fontSize: theme.fontSize.xl,
