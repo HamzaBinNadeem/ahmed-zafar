@@ -30,7 +30,6 @@ export default function TabLayout() {
         name="logs"
         options={{
           title: 'Logs',
-          href: '/workout',
           tabBarIcon: ({ color, size }) => <BarChart3 size={size} color={color} />,
         }}
       />
