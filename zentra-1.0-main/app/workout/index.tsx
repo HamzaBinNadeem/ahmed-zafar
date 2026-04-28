@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -16,15 +16,18 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronLeft, ChevronDown, Check, Trash2 } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Check, Trash2 } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import PrimaryButton from '@/components/PrimaryButton';
+import { supabase } from '@/lib/supabase';
 
 type WorkoutSet = {
   id: string;
   weight: number;
   reps: number;
   logged: boolean;
+  timestamp?: string;
+  date?: string;
 };
 
 type Exercise = {
@@ -42,26 +45,8 @@ export const unstable_settings = {
 
 export default function WorkoutLogScreen() {
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [exercises, setExercises] = useState<Exercise[]>([
-    {
-      name: 'Incline Bench Press',
-      equipment: 'Dumbbell',
-      sets: [
-        { id: '1', weight: 16, reps: 12, logged: true },
-        { id: '2', weight: 18, reps: 10, logged: false },
-        { id: '3', weight: 20, reps: 8, logged: false },
-      ],
-    },
-    {
-      name: 'Lat Pulldown',
-      equipment: 'Cable',
-      sets: [
-        { id: '4', weight: 50, reps: 12, logged: true },
-        { id: '5', weight: 55, reps: 10, logged: false },
-        { id: '6', weight: 60, reps: 8, logged: false },
-      ],
-    },
-  ]);
+  const [exercises, setExercises] = useState<Exercise[]>([]);
+  const [loading, setLoading] = useState(true);
 
   const [editingSetId, setEditingSetId] = useState<string | null>(null);
   const [editingWeight, setEditingWeight] = useState<string>('');
@@ -82,6 +67,13 @@ export default function WorkoutLogScreen() {
 
   const router = useRouter();
 
+  const toDateKey = (date: Date) => date.toISOString().split('T')[0];
+  const toMonthKey = (date: Date) => date.toISOString().slice(0, 7);
+
+  useEffect(() => {
+    loadWorkoutLogs();
+  }, [selectedDate]);
+
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-US', {
       day: 'numeric',
@@ -90,19 +82,139 @@ export default function WorkoutLogScreen() {
     });
   };
 
-  const toggleSetLogged = (exerciseName: string, setId: string) => {
+  const changeDate = (days: number) => {
+    const nextDate = new Date(selectedDate);
+    nextDate.setDate(nextDate.getDate() + days);
+    setSelectedDate(nextDate);
+  };
+
+  const loadWorkoutLogs = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setExercises([]);
+        return;
+      }
+
+      const selectedDateKey = toDateKey(selectedDate);
+      const { data, error } = await supabase
+        .from('user_logs_history')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('month', toMonthKey(selectedDate))
+        .order('updated_at', { ascending: false });
+
+      if (error) throw error;
+
+      const loadedExercises = (data || [])
+        .map((log: any) => {
+          const allSets = Array.isArray(log.sets) ? log.sets : [];
+          const setsForDate = allSets.filter((set: WorkoutSet) => {
+            const setDate = set.date ?? set.timestamp?.slice(0, 10);
+            return setDate === selectedDateKey;
+          });
+
+          return {
+            name: log.exercise_name,
+            equipment: setsForDate[0]?.equipment ?? log.muscle_group,
+            sets: setsForDate,
+          };
+        })
+        .filter((exercise: Exercise) => exercise.sets.length > 0);
+
+      setExercises(loadedExercises);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to load workout logs');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const persistExercise = async (exercise: Exercise) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('No user found');
+
+    const { error: profileError } = await supabase
+      .from('user_profiles')
+      .upsert(
+        {
+          id: user.id,
+          first_name: user.user_metadata?.first_name || 'Zentra',
+          last_name: user.user_metadata?.last_name || 'User',
+          onboarding_completed: false,
+        },
+        { onConflict: 'id' }
+      );
+
+    if (profileError) throw profileError;
+
+    const month = toMonthKey(selectedDate);
+    const selectedDateKey = toDateKey(selectedDate);
+
+    const { data: existing, error: fetchError } = await supabase
+      .from('user_logs_history')
+      .select('sets')
+      .eq('user_id', user.id)
+      .eq('month', month)
+      .eq('exercise_name', exercise.name)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+
+    const existingSets = Array.isArray(existing?.sets) ? existing.sets : [];
+    const otherDaySets = existingSets.filter((set: WorkoutSet) => {
+      const setDate = set.date ?? set.timestamp?.slice(0, 10);
+      return setDate !== selectedDateKey;
+    });
+
+    const setsForSelectedDate = exercise.sets.map((set) => ({
+      ...set,
+      date: selectedDateKey,
+      timestamp: set.timestamp ?? new Date().toISOString(),
+      equipment: exercise.equipment,
+    }));
+
+    const { error } = await supabase
+      .from('user_logs_history')
+      .upsert(
+        {
+          user_id: user.id,
+          month,
+          exercise_name: exercise.name,
+          muscle_group: exercise.equipment || 'Workout',
+          sets: [...otherDaySets, ...setsForSelectedDate],
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,month,exercise_name' }
+      );
+
+    if (error) throw error;
+  };
+
+  const toggleSetLogged = async (exerciseName: string, setId: string) => {
+    const targetExercise = exercises.find((exercise) => exercise.name === exerciseName);
+    if (!targetExercise) return;
+
+    const updatedExercise = {
+      ...targetExercise,
+      sets: targetExercise.sets.map((set) =>
+        set.id === setId
+          ? { ...set, logged: !set.logged, timestamp: new Date().toISOString(), date: toDateKey(selectedDate) }
+          : set
+      ),
+    };
+
     setExercises((prev) =>
-      prev.map((exercise) =>
-        exercise.name === exerciseName
-          ? {
-              ...exercise,
-              sets: exercise.sets.map((set) =>
-                set.id === setId ? { ...set, logged: !set.logged } : set
-              ),
-            }
-          : exercise
-      )
+      prev.map((exercise) => exercise.name === exerciseName ? updatedExercise : exercise)
     );
+
+    try {
+      await persistExercise(updatedExercise);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to update workout log');
+      loadWorkoutLogs();
+    }
   };
 
   const deleteExercise = (exerciseName: string) => {
@@ -114,16 +226,26 @@ export default function WorkoutLogScreen() {
         {
           text: 'Delete',
           style: 'destructive',
-          onPress: () =>
-            setExercises((prev) =>
-              prev.filter((exercise) => exercise.name !== exerciseName)
-            ),
+          onPress: async () => {
+            const targetExercise = exercises.find((exercise) => exercise.name === exerciseName);
+            if (!targetExercise) return;
+
+            const updatedExercise = { ...targetExercise, sets: [] };
+            setExercises((prev) => prev.filter((exercise) => exercise.name !== exerciseName));
+
+            try {
+              await persistExercise(updatedExercise);
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete workout log');
+              loadWorkoutLogs();
+            }
+          },
         },
       ]
     );
   };
 
-  const handleAddWorkout = () => {
+  const handleAddWorkout = async () => {
     if (
       !newExercise.name ||
       !newExercise.weight ||
@@ -145,27 +267,32 @@ export default function WorkoutLogScreen() {
       weight: Number(newExercise.weight),
       reps: Number(newExercise.reps),
       logged: false,
+      timestamp: new Date().toISOString(),
+      date: toDateKey(selectedDate),
     }));
 
-    setExercises((prev) => {
-      const existingExercise = prev.find((ex) => ex.name === newExercise.name);
-      if (existingExercise) {
-        return prev.map((ex) =>
-          ex.name === newExercise.name
-            ? { ...ex, sets: [...ex.sets, ...newSets] }
-            : ex
-        );
-      } else {
-        return [
-          ...prev,
-          {
-            name: newExercise.name,
-            equipment: newExercise.equipment,
-            sets: newSets,
-          },
-        ];
-      }
-    });
+    const existingExercise = exercises.find((ex) => ex.name === newExercise.name);
+    const updatedExercise = existingExercise
+      ? { ...existingExercise, sets: [...existingExercise.sets, ...newSets] }
+      : {
+          name: newExercise.name,
+          equipment: newExercise.equipment,
+          sets: newSets,
+        };
+
+    setExercises((prev) =>
+      existingExercise
+        ? prev.map((ex) => ex.name === newExercise.name ? updatedExercise : ex)
+        : [...prev, updatedExercise]
+    );
+
+    try {
+      await persistExercise(updatedExercise);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to save workout log');
+      loadWorkoutLogs();
+      return;
+    }
 
     setNewExercise({
       name: '',
@@ -204,9 +331,13 @@ export default function WorkoutLogScreen() {
 
         <View style={styles.dateSelector}>
           <TouchableOpacity style={styles.dateSelectorButton}>
-            <Text style={styles.dateSelectorText}>
-              {formatDate(selectedDate)}
-            </Text>
+            <TouchableOpacity onPress={() => changeDate(-1)}>
+              <ChevronLeft size={20} color={theme.colors.secondary} />
+            </TouchableOpacity>
+            <Text style={styles.dateSelectorText}>{formatDate(selectedDate)}</Text>
+            <TouchableOpacity onPress={() => changeDate(1)}>
+              <ChevronRight size={20} color={theme.colors.secondary} />
+            </TouchableOpacity>
           </TouchableOpacity>
         </View>
 
@@ -214,7 +345,16 @@ export default function WorkoutLogScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {exercises.map((exercise, index) => (
+          {loading ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>Loading workout logs...</Text>
+            </View>
+          ) : exercises.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No workout logs for this day</Text>
+              <Text style={styles.emptyText}>Tap “Add a workout +” to log your first set for {formatDate(selectedDate)}.</Text>
+            </View>
+          ) : exercises.map((exercise, index) => (
             <View key={index} style={styles.exerciseCard}>
               <View style={styles.exerciseHeader}>
                 <View>
@@ -273,44 +413,36 @@ export default function WorkoutLogScreen() {
                       keyboardType="numeric"
                       autoFocus
                       onBlur={() => {
+                        const updatedExercise = {
+                          ...exercise,
+                          sets: exercise.sets.map((s) =>
+                            s.id === set.id
+                              ? { ...s, weight: Number(editingWeight) || s.weight }
+                              : s
+                          ),
+                        };
                         setExercises((prev) =>
-                          prev.map((ex) =>
-                            ex.name === exercise.name
-                              ? {
-                                  ...ex,
-                                  sets: ex.sets.map((s) =>
-                                    s.id === set.id
-                                      ? {
-                                          ...s,
-                                          weight:
-                                            Number(editingWeight) || s.weight,
-                                        }
-                                      : s
-                                  ),
-                                }
-                              : ex
-                          )
+                          prev.map((ex) => ex.name === exercise.name ? updatedExercise : ex)
+                        );
+                        persistExercise(updatedExercise).catch((error: any) =>
+                          Alert.alert('Error', error.message || 'Failed to update set')
                         );
                         setEditingSetId(null);
                       }}
                       onSubmitEditing={() => {
+                        const updatedExercise = {
+                          ...exercise,
+                          sets: exercise.sets.map((s) =>
+                            s.id === set.id
+                              ? { ...s, weight: Number(editingWeight) || s.weight }
+                              : s
+                          ),
+                        };
                         setExercises((prev) =>
-                          prev.map((ex) =>
-                            ex.name === exercise.name
-                              ? {
-                                  ...ex,
-                                  sets: ex.sets.map((s) =>
-                                    s.id === set.id
-                                      ? {
-                                          ...s,
-                                          weight:
-                                            Number(editingWeight) || s.weight,
-                                        }
-                                      : s
-                                  ),
-                                }
-                              : ex
-                          )
+                          prev.map((ex) => ex.name === exercise.name ? updatedExercise : ex)
+                        );
+                        persistExercise(updatedExercise).catch((error: any) =>
+                          Alert.alert('Error', error.message || 'Failed to update set')
                         );
                         setEditingSetId(null);
                       }}
@@ -579,7 +711,7 @@ export default function WorkoutLogScreen() {
                       </TouchableOpacity>
                       <TouchableOpacity
                         style={styles.modalSaveButton}
-                        onPress={() => {
+                        onPress={async () => {
                           if (
                             !currentExerciseForSet ||
                             !newSetData.weight ||
@@ -596,14 +728,27 @@ export default function WorkoutLogScreen() {
                             weight: Number(newSetData.weight),
                             reps: Number(newSetData.reps),
                             logged: false,
+                            timestamp: new Date().toISOString(),
+                            date: toDateKey(selectedDate),
+                          };
+                          const targetExercise =
+                            exercises.find((ex) => ex.name === currentExerciseForSet.name) ??
+                            currentExerciseForSet;
+                          const updatedExercise = {
+                            ...targetExercise,
+                            sets: [...targetExercise.sets, newSet],
                           };
                           setExercises((prev) =>
                             prev.map((ex) =>
-                              ex.name === currentExerciseForSet.name
-                                ? { ...ex, sets: [...ex.sets, newSet] }
-                                : ex
+                              ex.name === currentExerciseForSet.name ? updatedExercise : ex
                             )
                           );
+                          try {
+                            await persistExercise(updatedExercise);
+                          } catch (error: any) {
+                            Alert.alert('Error', error.message || 'Failed to add set');
+                            loadWorkoutLogs();
+                          }
                           setShowAddSetModal(false);
                         }}
                       >
@@ -670,6 +815,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 16,
     paddingHorizontal: 10,
+    minWidth: 260,
   },
   dateSelectorText: {
     fontSize: theme.fontSize.md,
@@ -777,6 +923,25 @@ const styles = StyleSheet.create({
     color: theme.colors.white,
     fontWeight: '600',
     fontSize: theme.fontSize.sm,
+  },
+  emptyState: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: 24,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  emptyTitle: {
+    fontSize: theme.fontSize.md,
+    fontWeight: '600',
+    color: theme.colors.white,
+    marginBottom: 8,
+  },
+  emptyText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.secondary,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   modalOverlay: {
     flex: 1,

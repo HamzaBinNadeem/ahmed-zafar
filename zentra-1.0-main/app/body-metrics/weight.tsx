@@ -8,6 +8,7 @@ import { theme } from '@/constants/theme';
 import PrimaryButton from '@/components/PrimaryButton';
 import ScrollPicker from '@/components/ScrollPicker';
 import { supabase } from '@/lib/supabase';
+import { calculateBmi } from '@/lib/bodyMetrics';
 
 type WeightUnit = 'kg' | 'lb';
 
@@ -59,16 +60,41 @@ export default function WeightScreen() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('No user found');
 
-      const { error } = await supabase
+      const heightCm = Number(params.heightCm);
+      const bmi = calculateBmi(heightCm, weightKg);
+
+      if (!bmi) throw new Error('Please select valid height and weight values');
+
+      const { data: existingProfile, error: profileError } = await supabase
         .from('user_profiles')
-        .update({
-          height_cm: Number(params.heightCm),
-          weight_kg: weightKg,
-          height_unit: params.heightUnit as string,
-          weight_unit: unit,
-          onboarding_completed: true,
-        })
-        .eq('id', user.id);
+        .select('id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+
+      const metricsData = {
+        height_cm: heightCm,
+        weight_kg: weightKg,
+        height_unit: params.heightUnit as string,
+        weight_unit: unit,
+        bmi,
+        onboarding_completed: true,
+      };
+
+      const { error } = existingProfile
+        ? await supabase
+            .from('user_profiles')
+            .update(metricsData)
+            .eq('id', user.id)
+        : await supabase
+            .from('user_profiles')
+            .insert({
+              id: user.id,
+              first_name: user.user_metadata?.first_name || 'Zentra',
+              last_name: user.user_metadata?.last_name || 'User',
+              ...metricsData,
+            });
 
       if (error) throw error;
 

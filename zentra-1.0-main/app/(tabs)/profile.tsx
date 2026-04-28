@@ -8,6 +8,7 @@ import { theme } from '@/constants/theme';
 import { supabase } from '@/lib/supabase';
 import ScrollPicker from '@/components/ScrollPicker';
 import PrimaryButton from '@/components/PrimaryButton';
+import { calculateBmi, getBmiCategory } from '@/lib/bodyMetrics';
 
 export default function ProfileScreen() {
   const [profile, setProfile] = useState<any>(null);
@@ -36,19 +37,6 @@ export default function ProfileScreen() {
     } catch (error) {
       console.error('Error loading profile:', error);
     }
-  };
-
-  const calculateBMI = (heightCm: number, weightKg: number) => {
-    if (!heightCm || !weightKg) return null;
-    const heightM = heightCm / 100;
-    return (weightKg / (heightM * heightM)).toFixed(1);
-  };
-
-  const getBMICategory = (bmi: number) => {
-    if (bmi < 18.5) return 'Underweight';
-    if (bmi < 25) return 'Normal';
-    if (bmi < 30) return 'Overweight';
-    return 'Obese';
   };
 
   const handleSignOut = async () => {
@@ -147,8 +135,9 @@ export default function ProfileScreen() {
       }
 
       if (newHeight && newWeight && (editType === 'height' || editType === 'weight')) {
-        const bmi = calculateBMI(newHeight, newWeight);
+        const bmi = calculateBmi(newHeight, newWeight);
         updateData.bmi = bmi;
+        updateData.onboarding_completed = true;
       }
 
       const { error } = await supabase
@@ -251,9 +240,9 @@ export default function ProfileScreen() {
     }
   };
 
-  const bmi = profile?.height_cm && profile?.weight_kg
-    ? parseFloat(calculateBMI(profile.height_cm, profile.weight_kg) || '0')
-    : null;
+  const calculatedBmi = calculateBmi(profile?.height_cm, profile?.weight_kg);
+  const bmi = profile?.bmi ? Number(profile.bmi) : calculatedBmi;
+  const bmiCategory = getBmiCategory(bmi);
 
   return (
     <LinearGradient
@@ -276,9 +265,11 @@ export default function ProfileScreen() {
                     <Text style={styles.bmiText}>
                       BMI: {bmi}
                     </Text>
-                    <Text style={styles.bmiCategory}>
-                      {getBMICategory(bmi)}
-                    </Text>
+                    {bmiCategory && (
+                      <Text style={styles.bmiCategory}>
+                        {bmiCategory}
+                      </Text>
+                    )}
                   </View>
                 )}
               </>

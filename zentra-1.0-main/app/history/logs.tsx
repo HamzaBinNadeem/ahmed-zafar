@@ -123,6 +123,17 @@ export default function LogsHistoryScreen() {
             ) : (
               historyData.map((log) => {
                 const sets = Array.isArray(log.sets) ? log.sets : [];
+                const completedSets = sets.filter((set: any) => set.logged);
+                const totalVolume = completedSets.reduce(
+                  (sum: number, set: any) => sum + Number(set.weight || 0) * Number(set.reps || 0),
+                  0
+                );
+                const latestSet = [...sets].sort((a: any, b: any) => {
+                  const aTime = new Date(a.timestamp || a.date || 0).getTime();
+                  const bTime = new Date(b.timestamp || b.date || 0).getTime();
+                  return bTime - aTime;
+                })[0];
+                const latestDate = latestSet?.date || latestSet?.timestamp?.slice(0, 10);
                 return (
                   <View key={log.id} style={styles.logCard}>
                     <View style={styles.logHeader}>
@@ -135,7 +146,11 @@ export default function LogsHistoryScreen() {
                       </TouchableOpacity>
                     </View>
                     <View style={styles.setsInfo}>
-                      <Text style={styles.setsText}>{sets.length} sets</Text>
+                      <Text style={styles.setsText}>
+                        {completedSets.length}/{sets.length} completed sets
+                      </Text>
+                      <Text style={styles.detailText}>Volume: {totalVolume} kg</Text>
+                      {latestDate && <Text style={styles.detailText}>Latest log: {latestDate}</Text>}
                     </View>
                   </View>
                 );
@@ -212,6 +227,11 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.sm,
     color: theme.colors.primary,
     fontWeight: '500',
+  },
+  detailText: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.secondary,
+    marginTop: 4,
   },
   emptyState: {
     alignItems: 'center',

@@ -16,6 +16,7 @@ import { Eye, EyeOff, AlertCircle } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import PrimaryButton from '@/components/PrimaryButton';
 import { supabase } from '@/lib/supabase';
+import { hasCompletedBodyMetrics } from '@/lib/bodyMetrics';
 
 type TabType = 'login' | 'signup' | 'forgot';
 
@@ -35,6 +36,34 @@ export default function AuthScreen() {
 
   const validateEmail = (email: string) => {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  };
+
+  const ensureProfile = async (user: any) => {
+    const { data: profile, error } = await supabase
+      .from('user_profiles')
+      .select('id, height_cm, weight_kg, onboarding_completed')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (profile) return profile;
+
+    const { data: insertedProfile, error: insertError } = await supabase
+      .from('user_profiles')
+      .upsert(
+        {
+          id: user.id,
+          first_name: user.user_metadata?.first_name || firstName || 'Zentra',
+          last_name: user.user_metadata?.last_name || lastName || 'User',
+          onboarding_completed: false,
+        },
+        { onConflict: 'id' }
+      )
+      .select('id, height_cm, weight_kg, onboarding_completed')
+      .single();
+
+    if (insertError) throw insertError;
+    return insertedProfile;
   };
 
   const handleLogin = async () => {
@@ -58,13 +87,9 @@ export default function AuthScreen() {
       if (error) throw error;
 
       if (data.user) {
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('onboarding_completed')
-          .eq('id', data.user.id)
-          .maybeSingle();
+        const profile = await ensureProfile(data.user);
 
-        if (profile?.onboarding_completed) {
+        if (hasCompletedBodyMetrics(profile)) {
           router.replace('/(tabs)');
         } else {
           router.replace('/body-metrics');
@@ -112,6 +137,9 @@ export default function AuthScreen() {
       if (error) throw error;
 
       if (data.user) {
+        if (data.session) {
+          await ensureProfile(data.user);
+        }
         router.replace('/body-metrics');
       }
     } catch (error: any) {
