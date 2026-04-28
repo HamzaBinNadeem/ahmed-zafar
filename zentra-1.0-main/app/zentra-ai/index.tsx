@@ -21,8 +21,8 @@ export default function ZentraAIQueryScreen() {
 
   const quickPrompts = [
     'How do I lose belly fat?',
-    'Best exercises for beginners',
-    'How much protein do I need?',
+    'Best exercises for biceps',
+    'How much creatine should I take?',
   ];
 
   return (

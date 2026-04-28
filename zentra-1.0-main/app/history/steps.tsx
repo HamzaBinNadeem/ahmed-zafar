@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, Trash2 } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
-import DayProgressBar from '@/components/DayProgressBar';
 import { supabase } from '@/lib/supabase';
 
 export default function StepsHistoryScreen() {
@@ -13,9 +12,11 @@ export default function StepsHistoryScreen() {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  useEffect(() => {
-    loadStepsHistory();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      loadStepsHistory();
+    }, [])
+  );
 
   const loadStepsHistory = async () => {
     try {
@@ -23,15 +24,56 @@ export default function StepsHistoryScreen() {
       if (!user) return;
 
       const currentMonth = new Date().toISOString().slice(0, 7);
-      const { data, error } = await supabase
+      const monthStart = `${currentMonth}-01`;
+      const today = new Date().toISOString().split('T')[0];
+
+      const { data: monthHistory, error: historyError } = await supabase
         .from('user_steps_history')
-        .select('*')
+        .select('daily_data')
         .eq('user_id', user.id)
         .eq('month', currentMonth)
         .maybeSingle();
 
-      if (error) throw error;
-      setHistoryData(data?.daily_data || []);
+      if (historyError) throw historyError;
+
+      const { data: dailyRows, error: dailyError } = await supabase
+        .from('step_tracking')
+        .select('date, steps, goal, kcal, distance_km, active_minutes')
+        .eq('user_id', user.id)
+        .gte('date', monthStart)
+        .lte('date', today)
+        .order('date', { ascending: true });
+
+      if (dailyError) throw dailyError;
+
+      const byDate = new Map<string, any>();
+      const monthlyRows = Array.isArray(monthHistory?.daily_data) ? monthHistory.daily_data : [];
+
+      monthlyRows.forEach((day: any) => {
+        if (!day?.date) return;
+
+        byDate.set(day.date, {
+          ...day,
+          steps: Number(day.steps || 0),
+          goal: Number(day.goal || 8000),
+          kcal: Number(day.kcal || 0),
+          distance_km: Number(day.distance_km || 0),
+          active_minutes: Number(day.active_minutes || 0),
+        });
+      });
+
+      (dailyRows || []).forEach((day: any) => {
+        byDate.set(day.date, {
+          ...day,
+          steps: Number(day.steps || 0),
+          goal: Number(day.goal || 8000),
+          kcal: Number(day.kcal || 0),
+          distance_km: Number(day.distance_km || 0),
+          active_minutes: Number(day.active_minutes || 0),
+        });
+      });
+
+      setHistoryData(Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date)));
     } catch (error) {
       console.error('Error loading steps history:', error);
     } finally {
@@ -54,13 +96,25 @@ export default function StepsHistoryScreen() {
               if (!user) return;
 
               const currentMonth = new Date().toISOString().slice(0, 7);
-              const { error } = await supabase
+              const monthStart = `${currentMonth}-01`;
+              const today = new Date().toISOString().split('T')[0];
+
+              const { error: historyError } = await supabase
                 .from('user_steps_history')
                 .delete()
                 .eq('user_id', user.id)
                 .eq('month', currentMonth);
 
-              if (error) throw error;
+              if (historyError) throw historyError;
+
+              const { error: dailyError } = await supabase
+                .from('step_tracking')
+                .delete()
+                .eq('user_id', user.id)
+                .gte('date', monthStart)
+                .lte('date', today);
+
+              if (dailyError) throw dailyError;
               loadStepsHistory();
             } catch (error) {
               console.error('Error deleting steps history:', error);
@@ -125,9 +179,26 @@ export default function StepsHistoryScreen() {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          <DayProgressBar days={getDayData()} />
-
           <View style={styles.statsContainer}>
+            <Text style={styles.sectionTitle}>Daily Progress</Text>
+            <View style={styles.dayCircleGrid}>
+              {getDayData().map((day) => {
+                const fillHeight = (Math.min(day.completionPercent, 100) / 100) * 34;
+
+                return (
+                  <TouchableOpacity key={day.date} style={styles.dayCircleButton} activeOpacity={0.8}>
+                    <View style={styles.dayCircle}>
+                      <View style={[styles.dayCircleFill, { height: fillHeight }]} />
+                      <Text style={styles.dayCircleLabel}>{day.label}</Text>
+                    </View>
+                    <Text style={styles.dayCirclePercent}>
+                      {Math.round(day.completionPercent)}%
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
             <Text style={styles.sectionTitle}>Monthly Summary</Text>
 
             {loading ? (
@@ -138,7 +209,7 @@ export default function StepsHistoryScreen() {
                 <Text style={styles.emptySubtext}>Start tracking your steps to see them here</Text>
               </View>
             ) : (
-              <View style={styles.statsGrid}>
+              <View style={styles.summaryCard}>
                 <View style={styles.statCard}>
                   <Text style={styles.statValue}>{stats.totalSteps.toLocaleString()}</Text>
                   <Text style={styles.statLabel}>Total Steps</Text>
@@ -182,33 +253,77 @@ const styles = StyleSheet.create({
     color: theme.colors.white,
   },
   scrollContent: {
-    paddingBottom: 24,
+    paddingBottom: 16,
   },
   statsContainer: {
     paddingHorizontal: 24,
   },
+  dayCircleGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 8,
+    marginBottom: 18,
+  },
+  dayCircleButton: {
+    alignItems: 'center',
+    width: '13%',
+    paddingVertical: 3,
+  },
+  dayCircle: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: theme.colors.inactive,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  dayCircleFill: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: theme.colors.primary,
+  },
+  dayCircleLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: theme.colors.white,
+  },
+  dayCirclePercent: {
+    fontSize: 9,
+    color: theme.colors.secondary,
+    marginTop: 3,
+  },
   sectionTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.md,
     fontWeight: '600',
     color: theme.colors.white,
-    marginBottom: 16,
+    marginBottom: 10,
   },
-  statsGrid: {
+  summaryCard: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 8,
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: 10,
   },
   statCard: {
     flex: 1,
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.lg,
-    padding: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: theme.borderRadius.md,
+    paddingVertical: 12,
+    paddingHorizontal: 6,
     alignItems: 'center',
   },
   statValue: {
-    fontSize: theme.fontSize.xl,
+    fontSize: theme.fontSize.lg,
     fontWeight: 'bold',
     color: theme.colors.primary,
-    marginBottom: 8,
+    marginBottom: 4,
   },
   statLabel: {
     fontSize: theme.fontSize.xs,

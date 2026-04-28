@@ -8,7 +8,6 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
-  Keyboard,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -29,19 +28,8 @@ export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const scrollViewRef = useRef<ScrollView>(null);
   const router = useRouter();
-
-  // Keyboard listeners to detect visibility
-  useEffect(() => {
-    const showSub = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hideSub = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
-    return () => {
-      showSub.remove();
-      hideSub.remove();
-    };
-  }, []);
 
   // Initial query handling
   useEffect(() => {
@@ -96,70 +84,67 @@ export default function ChatScreen() {
   return (
     <LinearGradient colors={[theme.colors.background, '#0A0A0A']} style={styles.container}>
       <SafeAreaView style={styles.safeArea}>
-        {/* HEADER */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <ChevronLeft size={24} color={theme.colors.white} />
-          </TouchableOpacity>
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Zentra AI</Text>
-            <Text style={styles.headerSubtitle}>Got any questions? Ask away</Text>
-          </View>
-          <View style={{ width: 24 }} />
-        </View>
-
-        {/* CHAT CONTENT */}
-        <ScrollView
-          ref={scrollViewRef}
-          contentContainerStyle={styles.messagesContent}
-          keyboardShouldPersistTaps="handled"
-          contentInsetAdjustmentBehavior="automatic"
-        >
-          {messages.length === 0 && (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyText}>Start a conversation with Zentra AI</Text>
-            </View>
-          )}
-
-          {messages.map((message) => (
-            <View
-              key={message.id}
-              style={[
-                styles.messageBubble,
-                message.role === 'user' ? styles.userBubble : styles.assistantBubble,
-              ]}
-            >
-              <Text style={[styles.messageText, message.role === 'user' && styles.userText]}>
-                {message.content}
-              </Text>
-              <Text style={styles.timestamp}>
-                {message.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
-              </Text>
-            </View>
-          ))}
-
-          {isTyping && (
-            <View style={[styles.messageBubble, styles.assistantBubble]}>
-              <View style={styles.typingIndicator}>
-                <View style={styles.typingDot} />
-                <View style={styles.typingDot} />
-                <View style={styles.typingDot} />
-              </View>
-            </View>
-          )}
-        </ScrollView>
-
-        {/* INPUT BOX */}
         <KeyboardAvoidingView
+          style={styles.keyboardView}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
         >
-          <View
-            style={[
-              styles.inputContainer,
-              keyboardVisible && { paddingBottom: 12 }, // only add extra padding when keyboard is visible
-            ]}
+          {/* HEADER */}
+          <View style={styles.header}>
+            <TouchableOpacity onPress={() => router.back()}>
+              <ChevronLeft size={24} color={theme.colors.white} />
+            </TouchableOpacity>
+            <View style={styles.headerContent}>
+              <Text style={styles.headerTitle}>Zentra AI</Text>
+              <Text style={styles.headerSubtitle}>Got any questions? Ask away</Text>
+            </View>
+            <View style={{ width: 24 }} />
+          </View>
+
+          {/* CHAT CONTENT */}
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.messages}
+            contentContainerStyle={styles.messagesContent}
+            keyboardShouldPersistTaps="handled"
+            contentInsetAdjustmentBehavior="automatic"
           >
+            {messages.length === 0 && (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>Start a conversation with Zentra AI</Text>
+              </View>
+            )}
+
+            {messages.map((message) => (
+              <View
+                key={message.id}
+                style={[
+                  styles.messageBubble,
+                  message.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                ]}
+              >
+                <Text style={[styles.messageText, message.role === 'user' && styles.userText]}>
+                  {message.content}
+                </Text>
+                <Text style={styles.timestamp}>
+                  {message.timestamp.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
+            ))}
+
+            {isTyping && (
+              <View style={[styles.messageBubble, styles.assistantBubble]}>
+                <View style={styles.typingIndicator}>
+                  <View style={styles.typingDot} />
+                  <View style={styles.typingDot} />
+                  <View style={styles.typingDot} />
+                </View>
+              </View>
+            )}
+          </ScrollView>
+
+          {/* INPUT BOX */}
+          <View style={styles.inputContainer}>
             <TextInput
               style={styles.input}
               value={input}
@@ -185,6 +170,7 @@ export default function ChatScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
+  keyboardView: { flex: 1 },
 
   header: {
     flexDirection: 'row',
@@ -199,9 +185,11 @@ const styles = StyleSheet.create({
   headerTitle: { fontSize: theme.fontSize.md, fontWeight: '600', color: theme.colors.white },
   headerSubtitle: { fontSize: theme.fontSize.xs, color: theme.colors.secondary },
 
+  messages: { flex: 1 },
   messagesContent: {
     paddingHorizontal: 24,
     paddingTop: 16,
+    paddingBottom: 16,
     flexGrow: 1,
   },
 

@@ -9,8 +9,16 @@ import { theme } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
 import CircularProgress from "@/components/CircularProgress";
 
+type StepData = {
+  steps: number;
+  goal: number;
+  kcal: number;
+  distance_km: number;
+  active_minutes: number;
+};
+
 export default function StepsScreen() {
-  const [stepData, setStepData] = useState({
+  const [stepData, setStepData] = useState<StepData>({
     steps: 0,
     goal: 8000,
     kcal: 0,
@@ -19,7 +27,7 @@ export default function StepsScreen() {
   });
 
   const router = useRouter();
-  const accelSubscription = useRef(null);
+  const accelSubscription = useRef<{ remove: () => void } | null>(null);
   const lastPeak = useRef(0);
 
   useEffect(() => {
@@ -54,7 +62,13 @@ export default function StepsScreen() {
         .maybeSingle();
 
       if (data) {
-        setStepData({ ...data, goal });
+        setStepData({
+          steps: Number(data.steps || 0),
+          goal,
+          kcal: Number(data.kcal || 0),
+          distance_km: Number(data.distance_km || 0),
+          active_minutes: Number(data.active_minutes || 0),
+        });
       } else {
         setStepData({
           steps: 0,
@@ -105,29 +119,73 @@ export default function StepsScreen() {
         ...prev,
         steps: prev.steps + 1,
         kcal: (prev.steps + 1) * 0.04,
-        distance_km: ((prev.steps + 1) * 0.0008).toFixed(3),
+        distance_km: Number(((prev.steps + 1) * 0.0008).toFixed(3)),
         active_minutes: Math.floor((prev.steps + 1) / 120),
       };
-      saveSteps(updated.steps, updated.kcal, updated.distance_km, updated.active_minutes);
+      saveSteps(updated);
       return updated;
     });
   };
 
-  const saveSteps = async (steps, kcal, dist, minutes) => {
+  const saveSteps = async (data: StepData) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
       const today = new Date().toISOString().split("T")[0];
-
-      await supabase.from("step_tracking").upsert({
-        user_id: user.id,
+      const month = today.slice(0, 7);
+      const dailyEntry = {
         date: today,
-        steps,
-        kcal,
-        distance_km: dist,
-        active_minutes: minutes,
-      });
+        steps: data.steps,
+        goal: data.goal,
+        kcal: data.kcal,
+        distance_km: data.distance_km,
+        active_minutes: data.active_minutes,
+      };
+
+      const { error: dailyError } = await supabase.from("step_tracking").upsert(
+        {
+          user_id: user.id,
+          date: today,
+          steps: data.steps,
+          goal: data.goal,
+          kcal: data.kcal,
+          distance_km: data.distance_km,
+          active_minutes: data.active_minutes,
+        },
+        { onConflict: "user_id,date" }
+      );
+
+      if (dailyError) throw dailyError;
+
+      const { data: monthHistory, error: monthError } = await supabase
+        .from("user_steps_history")
+        .select("daily_data")
+        .eq("user_id", user.id)
+        .eq("month", month)
+        .maybeSingle();
+
+      if (monthError) throw monthError;
+
+      const existingDailyData = Array.isArray(monthHistory?.daily_data)
+        ? monthHistory.daily_data
+        : [];
+      const dailyData = [
+        ...existingDailyData.filter((entry: any) => entry.date !== today),
+        dailyEntry,
+      ].sort((a: any, b: any) => a.date.localeCompare(b.date));
+
+      const { error: historyError } = await supabase.from("user_steps_history").upsert(
+        {
+          user_id: user.id,
+          month,
+          daily_data: dailyData,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,month" }
+      );
+
+      if (historyError) throw historyError;
     } catch (error) {
       console.log("Saving error:", error);
     }
