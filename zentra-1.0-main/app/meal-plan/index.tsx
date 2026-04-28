@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   TextInput,
+  Alert,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -13,6 +14,9 @@ import { LinearGradient } from "expo-linear-gradient";
 import { ChevronLeft, ChevronDown } from "lucide-react-native";
 import { theme } from "@/constants/theme";
 import PrimaryButton from "@/components/PrimaryButton";
+import { generateDailyMealPlan, generateWeeklyMealPlan } from "@/lib/mealGeneratorApi";
+import { getGeneratedMealPlan, setGeneratedMealPlan, type DayMealPlan, type WeeklyMealPlan } from "@/lib/mealPlanStore";
+import { supabase } from "@/lib/supabase";
 
 type DropdownProps = {
   label: string;
@@ -63,20 +67,166 @@ export default function MealGeneratorScreen() {
   const [culinaryPreference, setCulinaryPreference] = useState("Any");
   const [dietaryPreference, setDietaryPreference] = useState("None");
   const [goal, setGoal] = useState("");
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [dailyPlan, setDailyPlan] = useState<DayMealPlan | null>(null);
+  const [weeklyPlan, setWeeklyPlan] = useState<WeeklyMealPlan | null>(null);
 
-  const handleGenerate = () => {
-    router.push("/meal-plan/weekly");
+  const getWeekStartDate = () => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    date.setDate(date.getDate() - date.getDay());
+    return date.toISOString().split("T")[0];
+  };
+
+  const buildUserProfilePrompt = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      throw new Error("Please sign in before generating a meal plan.");
+    }
+
+    const { data: profile, error } = await supabase
+      .from("user_profiles")
+      .select("height_cm, weight_kg, height_unit, weight_unit")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    const stats = profile
+      ? `Height: ${profile.height_cm ?? "not set"} cm. Weight: ${profile.weight_kg ?? "not set"} kg.`
+      : "Height and weight are not set.";
+
+    return [
+      stats,
+      `Culinary preference: ${culinaryPreference}.`,
+      `Dietary preference: ${dietaryPreference}.`,
+      `Goal: ${goal.trim() || "balanced fitness nutrition"}.`,
+    ].join(" ");
+  };
+
+  const isCompleteDayPlan = (plan?: DayMealPlan | null) => {
+    return Boolean(
+      plan?.breakfast?.food &&
+      plan?.lunch?.food &&
+      plan?.dinner?.food &&
+      plan?.snacks?.food
+    );
+  };
+
+  const handleGenerateDaily = async () => {
+    setDailyLoading(true);
+    try {
+      const userProfile = await buildUserProfilePrompt();
+      const plan = await generateDailyMealPlan({
+        userProfile,
+        dietaryPreference,
+        additionalRequirements: goal,
+      });
+
+      if (!isCompleteDayPlan(plan)) {
+        throw new Error("Daily meal plan was generated in an unexpected format.");
+      }
+
+      setDailyPlan(plan);
+      setGeneratedMealPlan({
+        dailyPlan: plan,
+        weeklyPlan: { day1: plan },
+        culinaryPreference,
+        dietaryPreference,
+        goal,
+      });
+    } catch (error: any) {
+      Alert.alert("Meal generator error", error.message || "Failed to generate daily meal plan.");
+    } finally {
+      setDailyLoading(false);
+    }
+  };
+
+  const handleGenerateWeekly = async () => {
+    setWeeklyLoading(true);
+    try {
+      const userProfile = await buildUserProfilePrompt();
+      const plan = await generateWeeklyMealPlan({
+        userProfile,
+        dietaryPreference,
+        additionalRequirements: goal,
+      });
+      const weekStartDate = getWeekStartDate();
+
+      setWeeklyPlan(plan);
+      setDailyPlan(plan.day1);
+      setGeneratedMealPlan({
+        dailyPlan: plan.day1,
+        weeklyPlan: plan,
+        culinaryPreference,
+        dietaryPreference,
+        goal,
+        weekStartDate,
+      });
+
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { error: saveError } = await supabase
+          .from("user_meal_history")
+          .upsert({
+            user_id: user.id,
+            week_start_date: weekStartDate,
+            meal_plan_data: {
+              culinary_preference: culinaryPreference,
+              dietary_preference: dietaryPreference,
+              goal,
+              plan,
+            },
+          }, { onConflict: "user_id,week_start_date" });
+
+        if (saveError) {
+          throw saveError;
+        }
+      }
+
+      router.push("/meal-plan/weekly");
+    } catch (error: any) {
+      Alert.alert("Meal generator error", error.message || "Failed to generate weekly meal plan.");
+    } finally {
+      setWeeklyLoading(false);
+    }
   };
 
   const handleGetRecipe = () => {
-    router.push("/meal-plan/recipe");
+    const generatedState = getGeneratedMealPlan();
+    const storedDailyPlan = generatedState.dailyPlan ?? generatedState.weeklyPlan?.day1;
+
+    if (!isCompleteDayPlan(dailyPlan ?? weeklyPlan?.day1 ?? storedDailyPlan)) {
+      Alert.alert("Generate a plan first", "Generate a daily or weekly meal plan before viewing recipes.");
+      return;
+    }
+
+    router.push("/meal-plan/recipe?source=daily&day=day1");
   };
 
-  const mealTypes = [
-    { label: "Breakfast", calories: 450, protein: 25, carbs: 45, fat: 15 },
-    { label: "Lunch", calories: 600, protein: 40, carbs: 55, fat: 20 },
-    { label: "Dinner", calories: 550, protein: 35, carbs: 50, fat: 18 },
-    { label: "Snacks", calories: 200, protein: 10, carbs: 25, fat: 8 },
+  const previewPlan = dailyPlan ?? weeklyPlan?.day1;
+  const mealTypes = previewPlan
+    ? [
+        { label: "Breakfast", meal: previewPlan.breakfast },
+        { label: "Lunch", meal: previewPlan.lunch },
+        { label: "Dinner", meal: previewPlan.dinner },
+        { label: "Snacks", meal: previewPlan.snacks },
+      ].map(({ label, meal }) => ({
+        label,
+        name: meal.food,
+        calories: Math.round(meal.macros.energy_kcal),
+        protein: Math.round(meal.macros.protein_g),
+        carbs: Math.round(meal.macros.carbohydrates_g),
+        fat: Math.round(meal.macros.fat_g),
+      }))
+    : [
+    { label: "Breakfast", name: "Not generated yet", calories: 0, protein: 0, carbs: 0, fat: 0 },
+    { label: "Lunch", name: "Not generated yet", calories: 0, protein: 0, carbs: 0, fat: 0 },
+    { label: "Dinner", name: "Not generated yet", calories: 0, protein: 0, carbs: 0, fat: 0 },
+    { label: "Snacks", name: "Not generated yet", calories: 0, protein: 0, carbs: 0, fat: 0 },
   ];
 
   const totalCalories = mealTypes.reduce((sum, m) => sum + m.calories, 0);
@@ -107,7 +257,7 @@ export default function MealGeneratorScreen() {
                 label="Culinary Preference"
                 value={culinaryPreference}
                 setValue={setCulinaryPreference}
-                options={["Any","Pakistani", "Italian", "Mexican", "Chineese", "American", "Mediterranean", "Thai"]}
+                options={["Any","Pakistani", "Italian", "Mexican", "Chinese", "American", "Mediterranean", "Thai"]}
               />
             </View>
 
@@ -116,7 +266,7 @@ export default function MealGeneratorScreen() {
                 label="Dietary Preference"
                 value={dietaryPreference}
                 setValue={setDietaryPreference}
-                options={["None","Vegetarian", "Keto", "Paleo", "High Protien", "Nut Free", "Dairy Free", "Gluten Free"]}
+                options={["None","Vegetarian", "Keto", "Paleo", "High Protein", "Nut Free", "Dairy Free", "Gluten Free"]}
               />
             </View>
           </View>
@@ -139,6 +289,7 @@ export default function MealGeneratorScreen() {
               {mealTypes.map((meal, i) => (
                 <View key={i} style={styles.previewCard}>
                   <Text style={styles.previewLabel}>{meal.label}</Text>
+                  <Text style={styles.previewName} numberOfLines={2}>{meal.name}</Text>
                   <Text style={styles.previewCalories}>{meal.calories} cal</Text>
                 </View>
               ))}
@@ -168,13 +319,24 @@ export default function MealGeneratorScreen() {
           </View>
 
           <PrimaryButton
-            title="Generate Weekly Plan"
-            onPress={handleGenerate}
+            title={dailyLoading ? "Generating Daily Plan..." : "Generate Daily Plan"}
+            onPress={handleGenerateDaily}
+            disabled={dailyLoading || weeklyLoading}
             style={styles.generateButton}
           />
 
           <TouchableOpacity style={styles.secondaryButton} onPress={handleGetRecipe}>
-            <Text style={styles.secondaryButtonText}>Get Recipe</Text>
+            <Text style={styles.secondaryButtonText}>View Daily Recipes</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={handleGenerateWeekly}
+            disabled={dailyLoading || weeklyLoading}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {weeklyLoading ? "Generating 7-Day Plan..." : "Generate 7-Day Weekly Plan"}
+            </Text>
           </TouchableOpacity>
         </ScrollView>
       </SafeAreaView>
@@ -281,6 +443,12 @@ const styles = StyleSheet.create({
     fontSize: theme.fontSize.md,
     color: theme.colors.primary,
     fontWeight: "600",
+  },
+  previewName: {
+    fontSize: theme.fontSize.xs,
+    color: theme.colors.secondary,
+    marginBottom: 6,
+    minHeight: 30,
   },
 
   totalsCard: {

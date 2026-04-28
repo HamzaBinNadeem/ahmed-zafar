@@ -6,19 +6,19 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import PrimaryButton from '@/components/PrimaryButton';
+import { getGeneratedMealPlan } from '@/lib/mealPlanStore';
 
-const weekDays = ['Thursday', 'Friday', 'Saturday', 'Sunday', 'Monday', 'Tuesday', 'Wednesday'];
-const mealTypes = ['B', 'L', 'D', 'S'];
-
-const meals = {
-  B: 'Egg Omelette With Chai',
-  L: 'Chicken Breast with Rice',
-  D: 'Grilled Salmon with Vegetables',
-  S: 'Greek Yogurt with Berries',
+const mealTypes = {
+  breakfast: 'B',
+  lunch: 'L',
+  dinner: 'D',
+  snacks: 'S',
 };
 
 export default function WeeklyMealPlanScreen() {
   const router = useRouter();
+  const { weeklyPlan } = getGeneratedMealPlan();
+  const weekEntries = weeklyPlan ? Object.entries(weeklyPlan) : [];
 
   return (
     <LinearGradient colors={[theme.colors.background, '#0A0A0A']} style={styles.container}>
@@ -34,26 +34,33 @@ export default function WeeklyMealPlanScreen() {
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <Text style={styles.subtitle}>This is what you need for the entire week.</Text>
 
-          {weekDays.map((day, index) => (
-            <View key={index} style={styles.dayCard}>
-              <Text style={styles.dayTitle}>{day}</Text>
+          {weekEntries.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No generated meal plan yet.</Text>
+              <Text style={styles.emptySubtext}>Go back and generate a weekly plan first.</Text>
+            </View>
+          ) : weekEntries.map(([dayKey, mealsForDay], index) => (
+            <View key={dayKey} style={styles.dayCard}>
+              <Text style={styles.dayTitle}>Day {index + 1}</Text>
 
               <View style={styles.mealsRow}>
-                {mealTypes.map((type, idx) => (
+                {Object.entries(mealTypes).map(([mealKey, label], idx) => {
+                  const meal = mealsForDay[mealKey as keyof typeof mealsForDay];
+                  return (
                   <TouchableOpacity
                     key={idx}
                     style={styles.mealChip}
                     onPress={() =>
-                      router.push(`/meal-plan/recipe?meal=${type}&day=${day}`)
+                      router.push(`/meal-plan/recipe?meal=${mealKey}&day=${dayKey}`)
                     }
                   >
-                    <Text style={styles.mealType}>{type}</Text>
+                    <Text style={styles.mealType}>{label}</Text>
                     <Text style={styles.mealName} numberOfLines={1}>
-                      {meals[type]}
+                      {meal.food}
                     </Text>
                     <ChevronRight size={16} color={theme.colors.secondary} />
                   </TouchableOpacity>
-                ))}
+                )})}
               </View>
             </View>
           ))}
@@ -125,4 +132,20 @@ const styles = StyleSheet.create({
     color: theme.colors.white,
   },
   button: { marginTop: 16 },
+  emptyCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: 20,
+    marginBottom: 12,
+  },
+  emptyText: {
+    fontSize: theme.fontSize.md,
+    color: theme.colors.white,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.secondary,
+  },
 });

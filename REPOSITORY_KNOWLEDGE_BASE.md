@@ -10,6 +10,9 @@ Generated for future reference from a full repository inventory and first-party 
 - RAG API runtime dependencies now include FastAPI and Uvicorn. Evidence: `backend/rag/requirements.txt`.
 - To run the RAG API locally: from `backend/rag`, install dependencies and start `uvicorn api:app --reload --host 0.0.0.0 --port 8001`.
 - Mobile API base URL resolution: `zentra-1.0-main/lib/ragApi.ts` uses `EXPO_PUBLIC_RAG_API_BASE_URL` when provided, otherwise infers the Expo dev host and port `8001`, with Android emulator and localhost fallbacks.
+- Meal generator integration update: the mobile meal-plan flow now calls the FastAPI meal generator through `zentra-1.0-main/lib/mealGeneratorApi.ts`, using `EXPO_PUBLIC_MEAL_GENERATOR_API_BASE_URL` when set and otherwise inferring the Expo dev host on port `8000`. Evidence: `zentra-1.0-main/lib/mealGeneratorApi.ts`, `zentra-1.0-main/app/meal-plan/index.tsx`.
+- Generated mobile meal plans are shared between meal screens via `zentra-1.0-main/lib/mealPlanStore.ts`; the generator screen can create a daily plan for preview/recipes or a 7-day weekly plan, the weekly screen renders the generated week, the recipe screen generates full-day recipes split into breakfast/lunch/dinner/snacks, and the shopping-list screen calls `/api/v1/shopping_list/generate`. Evidence: `zentra-1.0-main/app/meal-plan/index.tsx`, `zentra-1.0-main/app/meal-plan/weekly.tsx`, `zentra-1.0-main/app/meal-plan/recipe.tsx`, `zentra-1.0-main/app/meal-plan/shopping-list.tsx`.
+- Meal API now exposes `/api/v1/meal-planning/generate-weekly` and the meal agent can emit either `day1` or `day1` through `day7` structured JSON depending on the requested day count. Evidence: `backend/mealgenerator/apps/api/app/api/v1/meal_planning.py`, `backend/mealgenerator/apps/api/app/core/meal_agent.py`.
 
 ## A. Repository Overview
 
@@ -100,7 +103,7 @@ Evidence: `zentra-1.0-main/package.json`, `zentra-1.0-main/app.json`, `zentra-1.
 
 - Relevant files: `backend/mealgenerator/apps/web/src/pages/Chat.tsx`, `backend/mealgenerator/apps/api/app/api/v1/meal_planning.py`, `backend/mealgenerator/apps/api/app/core/meal_agent.py`.
 - Takes user profile/preferences, asks OpenAI GPT-4o with USDA tool calls, expects strict JSON with `day1` and meal macros.
-- Edge case: frontend calls `/generate-weekly`, but API only defines `/generate` and `/generate-daily`.
+- Resolved edge case: frontend/mobile clients can now call `/generate-weekly`; API defines `/generate`, `/generate-daily`, and `/generate-weekly`.
 
 ### Food Image Analysis
 
@@ -188,7 +191,7 @@ Evidence: `backend/mealgenerator/README.md`, `backend/mealgenerator/apps/web/pac
 
 ## M. Risks / Code Smells / Gaps
 
-- Web frontend calls API endpoints that are absent or placeholders: `/api/v1/auth/refresh`, `/api/v1/auth/me`, `/api/v1/meal-planning/generate-weekly`. Evidence: `backend/mealgenerator/apps/web/src/lib/auth.ts`, `backend/mealgenerator/apps/web/src/pages/Chat.tsx`, `backend/mealgenerator/apps/api/app/api/v1/auth.py`, `backend/mealgenerator/apps/api/app/api/v1/meal_planning.py`.
+- Web frontend still calls auth endpoints that are absent or placeholders: `/api/v1/auth/refresh`, `/api/v1/auth/me`. The formerly missing meal endpoint `/api/v1/meal-planning/generate-weekly` is now present. Evidence: `backend/mealgenerator/apps/web/src/lib/auth.ts`, `backend/mealgenerator/apps/api/app/api/v1/auth.py`, `backend/mealgenerator/apps/api/app/api/v1/meal_planning.py`.
 - Auth dependency is incomplete and likely unusable if wired. Evidence: `backend/mealgenerator/apps/api/app/deps/auth.py`, `backend/mealgenerator/apps/api/app/core/security.py`, `backend/mealgenerator/apps/api/app/domains/users/repo.py`.
 - Hardcoded secret default and permissive CORS/logging are security risks. Evidence: `backend/mealgenerator/apps/api/app/core/config.py`, `backend/mealgenerator/apps/api/app/main.py`.
 - Mobile app has Supabase tables for meal/chat/workout history but several screens use hardcoded/mock data or local-only state. Evidence: `zentra-1.0-main/app/meal-plan/*.tsx`, `zentra-1.0-main/app/zentra-ai/chat.tsx`, `zentra-1.0-main/app/workout/index.tsx`, `zentra-1.0-main/app/form-correction/live.tsx`.

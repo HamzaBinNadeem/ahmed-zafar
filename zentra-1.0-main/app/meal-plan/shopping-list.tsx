@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -7,33 +7,72 @@ import { ChevronLeft } from 'lucide-react-native';
 import { theme } from '@/constants/theme';
 import PrimaryButton from '@/components/PrimaryButton';
 import * as Clipboard from 'expo-clipboard';
-
-const shoppingList = {
-  'Vegetables & Herbs': [
-    { name: 'Tomatoes', qty: '4 pcs' },
-    { name: 'Onions', qty: '2 pcs' },
-    { name: 'Bell Peppers', qty: '3 pcs' },
-  ],
-  'Dairy': [
-    { name: 'Eggs', qty: '12 pcs' },
-    { name: 'Milk', qty: '1 liter' },
-    { name: 'Cheese', qty: '200g' },
-  ],
-  'Protein': [
-    { name: 'Chicken Breast', qty: '1 kg' },
-    { name: 'Salmon Fillet', qty: '500g' },
-  ],
-  'Grains': [
-    { name: 'Brown Rice', qty: '1 kg' },
-    { name: 'Whole Wheat Bread', qty: '1 loaf' },
-  ],
-};
+import { generateShoppingList, type ShoppingList } from '@/lib/mealGeneratorApi';
+import { getGeneratedMealPlan, setGeneratedShoppingList } from '@/lib/mealPlanStore';
+import { supabase } from '@/lib/supabase';
 
 export default function ShoppingListScreen() {
   const router = useRouter();
-  const [checkedItems, setCheckedItems] = React.useState({});
+  const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({});
+  const [shoppingList, setShoppingList] = useState<ShoppingList>({});
+  const [loading, setLoading] = useState(true);
 
-  const toggleCheck = (category, idx) => {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadShoppingList() {
+      const { weeklyPlan, shoppingList: cachedList } = getGeneratedMealPlan();
+
+      if (cachedList) {
+        setShoppingList(cachedList);
+        setLoading(false);
+        return;
+      }
+
+      if (!weeklyPlan) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const data = await generateShoppingList(weeklyPlan);
+        if (cancelled) return;
+
+        setShoppingList(data);
+        setGeneratedShoppingList(data);
+
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const { error: saveError } = await supabase
+            .from('shopping_lists')
+            .insert({
+              user_id: user.id,
+              items: data,
+            });
+
+          if (saveError) {
+            throw saveError;
+          }
+        }
+      } catch (error: any) {
+        if (!cancelled) {
+          Alert.alert('Shopping list error', error.message || 'Failed to generate shopping list.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadShoppingList();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const toggleCheck = (category: string, idx: number) => {
     const key = `${category}-${idx}`;
     setCheckedItems(prev => ({
       ...prev,
@@ -42,22 +81,20 @@ export default function ShoppingListScreen() {
   };
 
   const handleCopy = async () => {
-    // Build the text of the entire shopping list
     let listText = '';
     Object.entries(shoppingList).forEach(([category, items]) => {
       listText += `${category}:\n`;
       items.forEach(item => {
-        listText += `- ${item.name} (${item.qty})\n`;
+        listText += `- ${item}\n`;
       });
       listText += '\n';
     });
 
-    // Copy to clipboard
     await Clipboard.setStringAsync(listText);
-
-    // Show success alert
     Alert.alert('Success', 'Shopping list copied to clipboard');
   };
+
+  const hasItems = Object.keys(shoppingList).length > 0;
 
   return (
     <LinearGradient
@@ -65,8 +102,6 @@ export default function ShoppingListScreen() {
       style={styles.container}
     >
       <SafeAreaView style={styles.safeArea}>
-        
-        {/* HEADER */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()}>
             <ChevronLeft size={24} color={theme.colors.white} />
@@ -76,9 +111,15 @@ export default function ShoppingListScreen() {
           <View style={{ width: 24 }} />
         </View>
 
-        {/* CONTENT */}
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {Object.entries(shoppingList).map(([category, items], index) => (
+          {loading ? (
+            <Text style={styles.emptyText}>Generating your shopping list...</Text>
+          ) : !hasItems ? (
+            <View style={styles.emptyCard}>
+              <Text style={styles.emptyText}>No shopping list yet.</Text>
+              <Text style={styles.emptySubtext}>Generate a weekly meal plan first.</Text>
+            </View>
+          ) : Object.entries(shoppingList).map(([category, items], index) => (
             <View key={index} style={styles.categorySection}>
               <Text style={styles.categoryTitle}>{category}</Text>
 
@@ -102,41 +143,31 @@ export default function ShoppingListScreen() {
                       {isChecked && <Text style={styles.checkmark}>✓</Text>}
                     </View>
 
-                    <View style={styles.itemContent}>
-                      <Text
-                        style={[
-                          styles.itemName,
-                          isChecked && {
-                            textDecorationLine: 'line-through',
-                            opacity: 0.6,
-                          },
-                        ]}
-                      >
-                        {item.name}
-                      </Text>
-
-                      <Text
-                        style={[
-                          styles.itemQty,
-                          isChecked && { opacity: 0.6 },
-                        ]}
-                      >
-                        {item.qty}
-                      </Text>
-                    </View>
+                    <Text
+                      style={[
+                        styles.itemName,
+                        isChecked && {
+                          textDecorationLine: 'line-through',
+                          opacity: 0.6,
+                        },
+                      ]}
+                    >
+                      {item}
+                    </Text>
                   </TouchableOpacity>
                 );
               })}
             </View>
           ))}
 
-          <PrimaryButton
-            title="Copy Entire Shopping List"
-            onPress={handleCopy}
-            style={styles.button}
-          />
+          {hasItems && (
+            <PrimaryButton
+              title="Copy Entire Shopping List"
+              onPress={handleCopy}
+              style={styles.button}
+            />
+          )}
         </ScrollView>
-
       </SafeAreaView>
     </LinearGradient>
   );
@@ -145,7 +176,6 @@ export default function ShoppingListScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   safeArea: { flex: 1 },
-
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -153,27 +183,22 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingVertical: 16,
   },
-
   headerTitle: {
     fontSize: theme.fontSize.lg,
     fontWeight: '600',
     color: theme.colors.white,
   },
-
   scrollContent: {
     paddingHorizontal: 24,
     paddingBottom: 24,
   },
-
   categorySection: { marginBottom: 24 },
-
   categoryTitle: {
     fontSize: theme.fontSize.md,
     fontWeight: '600',
     color: theme.colors.primary,
     marginBottom: 12,
   },
-
   itemRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -183,7 +208,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     gap: 12,
   },
-
   checkbox: {
     width: 22,
     height: 22,
@@ -193,37 +217,36 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-
   checkboxChecked: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-
   checkmark: {
-    color: "#FFF",
+    color: '#FFF',
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginTop: -1,
   },
-
-  itemContent: {
-    flex: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
   itemName: {
+    flex: 1,
     fontSize: theme.fontSize.md,
     color: theme.colors.white,
     fontWeight: '500',
   },
-
-  itemQty: {
-    fontSize: theme.fontSize.sm,
-    color: theme.colors.secondary,
+  emptyCard: {
+    backgroundColor: theme.colors.card,
+    borderRadius: theme.borderRadius.lg,
+    padding: 20,
   },
-
+  emptyText: {
+    fontSize: theme.fontSize.md,
+    color: theme.colors.secondary,
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.inactive,
+  },
   button: {
     marginTop: 16,
     marginBottom: 16,
