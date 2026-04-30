@@ -2,8 +2,12 @@
 
 Generated for future reference from a full repository inventory and first-party source review.
 
+Companion maintenance file: `ISSUES.md` tracks solved issues, applied fixes, and alternative solutions not taken. Update it whenever future bugs or integration issues are resolved.
+
 ## Latest Integration Note
 
+- Model gateway update: `model_gateway` now contains a standalone FastAPI service for bicep curl form-correction inference. The service loads `Bicep_Curl_Done/Try_2.keras` and `Bicep_Curl_Done/reps2.pkl` once on startup, exposes bicep-curl-specific session/frame endpoints, keeps per-session rep-counting state, and preserves `Bicep_Curl_Done/camera_server.py` as a compatibility launcher. Evidence: `model_gateway/app/main.py`, `model_gateway/app/services/bicep_curl_service.py`, `model_gateway/app/api/v1/bicep_curl.py`, `model_gateway/Bicep_Curl_Done/camera_server.py`, `model_gateway/README.md`.
+- Model gateway runtime note: syntax and FastAPI import checks pass, but full model smoke testing requires TensorFlow to be installed in the active Python environment. Evidence: `model_gateway/requirements.txt`, `model_gateway/scripts/smoke_test_bicep_curl.py`.
 - Zentra AI mobile chat now calls the RAG backend instead of returning simulated local responses. Evidence: `zentra-1.0-main/app/zentra-ai/chat.tsx`, `zentra-1.0-main/lib/ragApi.ts`.
 - The RAG service now exposes a FastAPI server with `GET /health` and `POST /ask`. Evidence: `backend/rag/api.py`.
 - The RAG LangChain QA chain is cached in process to avoid rebuilding the Pinecone/OpenAI chain on every request. Evidence: `backend/rag/src/query.py`.

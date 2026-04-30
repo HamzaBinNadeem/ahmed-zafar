@@ -13,7 +13,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   ChevronLeft,
   Dumbbell,
-  ArmFlexed,
   Activity,
   Shirt,
   BicepsFlexed,
@@ -30,12 +29,12 @@ const muscleGroups = [
   { name: 'Biceps', exercises: 6 },
 ];
 
-const muscleIcons = {
+const muscleIcons: Record<string, typeof Dumbbell> = {
   Chest: Shirt,
   Back: Activity,
   Shoulders: Dumbbell,
   Legs: Footprints,
-  Triceps: ArmFlexed,
+  Triceps: Dumbbell,
   Biceps: BicepsFlexed,
 };
 

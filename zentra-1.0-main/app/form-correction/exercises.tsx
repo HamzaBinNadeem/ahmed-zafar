@@ -12,7 +12,7 @@ const exercisesByGroup: { [key: string]: string[] } = {
   Shoulders: ['Overhead Press', 'Lateral Raises', 'Front Raises', 'Arnold Press', 'Shrugs'],
   Legs: ['Squats', 'Lunges', 'Leg Press', 'Leg Curls', 'Calf Raises'],
   Triceps: ['Tricep Dips', 'Skull Crushers', 'Overhead Extension', 'Cable Pushdown'],
-  Biceps: ['Barbell Curl', 'Hammer Curl', 'Preacher Curl', 'Concentration Curl'],
+  Biceps: ['Bicep Curl', 'Hammer Curl', 'Preacher Curl', 'Concentration Curl'],
 }; 
 
 

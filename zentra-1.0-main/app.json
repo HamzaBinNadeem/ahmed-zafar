@@ -24,6 +24,12 @@
       "expo-font",
       "expo-web-browser",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Zentra AI to use your camera for live form correction."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Allow Zentra AI to access your photos so you can upload a profile picture."
